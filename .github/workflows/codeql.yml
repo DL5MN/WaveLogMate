@@ -27,7 +27,7 @@ jobs:
             build-mode: manual
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Cache SPM
         if: matrix.language == 'swift'
