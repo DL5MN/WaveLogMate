@@ -31,7 +31,7 @@ jobs:
 
       - name: Cache SPM
         if: matrix.language == 'swift'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: .build
           key: ${{ runner.os }}-spm-codeql-${{ hashFiles('Package.resolved') }}
