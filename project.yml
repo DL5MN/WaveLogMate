@@ -20,8 +20,8 @@ targets:
       path: Sources/WaveLogMate/Info.plist
       properties:
         CFBundleDisplayName: WaveLogMate
-        CFBundleShortVersionString: "1.1.2"
-        CFBundleVersion: "12"
+        CFBundleShortVersionString: "1.1.3"
+        CFBundleVersion: "13"
         LSMinimumSystemVersion: "14.0"
         LSUIElement: true
         NSAppTransportSecurity:
