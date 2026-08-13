@@ -157,7 +157,7 @@ WaveLogMate is built with:
 - **Keychain** - Secure API key storage
 - **UserNotifications** - macOS notifications
 
-See [PLAN.md](PLAN.md) for detailed architecture documentation.
+See [DECISIONS.md](DECISIONS.md) for the design decisions behind the code.
 
 ## How It Compares
 
