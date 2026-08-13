@@ -14,6 +14,7 @@ WaveLogMate receives QSO data from WSJT-X and automatically forwards it to your 
 ## Features
 
 - **Automatic QSO Logging** - QSOs from WSJT-X are logged to Wavelog in real-time
+- **Wavelog API v1 and v2** - Picks the matching API from your key, no setting needed
 - **Flexible Protocol Choice** - Text ADIF/XML (port 2333) or binary QDataStream (port 2237)
 - **Menu Bar App** - Lives in your menu bar with live status display
 - **Real-time Status** - Shows current frequency, mode, and DX call from WSJT-X
@@ -29,7 +30,8 @@ WaveLogMate receives QSO data from WSJT-X and automatically forwards it to your 
 
 - macOS 14 (Sonoma) or later
 - [WSJT-X](https://wsjt-x.sourceforge.io/) or [WSJT-X Improved](https://wsjt-x-improved.sourceforge.io/)
-- A [Wavelog](https://www.wavelog.org) instance (2.4 or later recommended) with API access
+- A [Wavelog](https://www.wavelog.org) instance with API access. Version 2.4 or later for
+  API v1, version 3.1.0 or later for API v2.
 
 ## Installation
 
@@ -65,7 +67,10 @@ WSJT-X sends UDP data to a configured address and port. Despite the label "UDP S
 2. Click **Settings**
 3. **Wavelog tab**:
    - Enter your Wavelog URL (e.g., `https://log.example.com`)
-   - Enter your API Key (from Wavelog -> User Menu -> API Keys, must be Read+Write)
+   - Enter your API key (Wavelog -> User Menu -> API Keys). WaveLogMate reads the key
+     prefix and picks the matching API: a `wl2_` token uses API v2, any other key uses
+     API v1. A v2 token needs the scopes `qso:write` and `station:read`. A v1 key must
+     be Read+Write.
    - Select your Station Profile from the dropdown
    - Click **Test Connection** to verify
 4. **WSJT-X tab**:
@@ -82,7 +87,7 @@ Once configured, WaveLogMate automatically receives QSOs from WSJT-X. When you l
 | Setting                 | Default   | Description                                                |
 | ----------------------- | --------- | ---------------------------------------------------------- |
 | Wavelog URL             | -         | Your Wavelog instance URL                                  |
-| API Key                 | -         | Read+Write API key from Wavelog                            |
+| API Key                 | -         | `wl2_` token (API v2) or Read+Write key (API v1)           |
 | Station Profile         | -         | Selected from your Wavelog station locations               |
 | Protocol                | Text      | Text (ADIF/XML) or Binary (QDataStream) — one at a time   |
 | Text UDP Port           | 2333      | WSJT-X Secondary UDP Server port                           |

@@ -20,22 +20,38 @@ public final class WavelogAPIClient: @unchecked Sendable {
     }
   }
 
-  public struct QSOResponse: Codable, Sendable, Equatable {
-    public let status: String
-    public let messages: [String]?
-
-    public init(status: String, messages: [String]? = nil) {
-      self.status = status
-      self.messages = messages
-    }
+  /// Which Wavelog API a credential targets. API v2 tokens carry a `wl2_`
+  /// prefix and the server rejects everything else on `/api/v2`, so the prefix
+  /// alone decides the code path — no setting needed.
+  public enum APIVersion: Sendable, Equatable {
+    case v1
+    case v2
   }
 
-  public struct VersionResponse: Codable, Sendable {
-    public let status: String
-    public let version: String
+  /// How the server identifies itself. v1 reports its release; v2 has no
+  /// version endpoint, so the token owner's callsign stands in.
+  public enum ServerInfo: Sendable, Equatable {
+    case version(String)
+    case tokenOwner(String)
   }
 
-  private struct QSORequestPayload: Codable, Sendable {
+  private static let v2TokenPrefix = "wl2_"
+
+  public static func apiVersion(for apiKey: String) -> APIVersion {
+    apiKey.hasPrefix(v2TokenPrefix) ? .v2 : .v1
+  }
+
+  private struct V1QSOResponse: Decodable, Sendable {
+    let status: String
+    let messages: [String]?
+  }
+
+  private struct V1VersionResponse: Decodable, Sendable {
+    let status: String
+    let version: String
+  }
+
+  private struct V1QSOPayload: Encodable, Sendable {
     let key: String
     let stationProfileID: String
     let type: String
@@ -49,8 +65,46 @@ public final class WavelogAPIClient: @unchecked Sendable {
     }
   }
 
-  private struct KeyPayload: Codable, Sendable {
+  private struct V1KeyPayload: Encodable, Sendable {
     let key: String
+  }
+
+  /// Every v2 response wraps its payload in `data` alongside a `meta` block.
+  private struct V2Envelope<T: Decodable>: Decodable {
+    let data: T
+  }
+
+  private struct V2ADIFImportPayload: Encodable, Sendable {
+    let stationProfileID: Int
+    let adif: String
+    let dryrun: Bool
+    let importType = "adif"
+
+    enum CodingKeys: String, CodingKey {
+      case stationProfileID = "station_profile_id"
+      case adif
+      case dryrun
+      case importType = "import_type"
+    }
+  }
+
+  private struct V2ImportResult: Decodable, Sendable {
+    let parsed: Int
+    let imported: Int?
+    let skipped: Int?
+    let messages: [String]?
+  }
+
+  private struct V2Token: Decodable, Sendable {
+    let owner: String?
+  }
+
+  private struct V2Station: Decodable, Sendable {
+    let id: Int
+    let name: String?
+    let callsign: String?
+    let gridsquare: String?
+    let active: Bool?
   }
 
   private static let userAgent: String = {
@@ -80,21 +134,49 @@ public final class WavelogAPIClient: @unchecked Sendable {
     apiKey: String,
     stationProfileID: String,
     baseURL: String
-  ) async throws -> QSOResponse {
-    let payload = try Self.buildQSOPayload(
-      adifString: adifString,
-      apiKey: apiKey,
-      stationProfileID: stationProfileID
-    )
-    let request = try buildRequest(baseURL: baseURL, endpointPath: "qso", body: payload)
-    let response: QSOResponse = try await perform(request, decodeAs: QSOResponse.self)
+  ) async throws {
+    switch Self.apiVersion(for: apiKey) {
+    case .v2:
+      let payload = try Self.buildV2ADIFPayload(
+        adifString: adifString,
+        stationProfileID: stationProfileID,
+        dryrun: false
+      )
+      let request = try buildRequest(
+        baseURL: baseURL,
+        path: "api/v2/qso",
+        method: "POST",
+        body: payload,
+        bearerToken: apiKey
+      )
+      let result: V2ImportResult = try await performV2(request, label: "api/v2/qso")
 
-    guard response.status.lowercased() == "created" || response.status.lowercased() == "ok" else {
-      let message = response.messages?.joined(separator: ", ") ?? "Wavelog rejected QSO"
-      throw APIError(message: message)
+      // A skipped row is a duplicate, which means the QSO is already in the
+      // log — the same outcome v1 reports as "created". Only a batch that
+      // stored nothing at all is a failure.
+      guard (result.imported ?? 0) > 0 || (result.skipped ?? 0) > 0 else {
+        throw APIError(message: Self.joinMessages(result.messages) ?? "Wavelog imported no QSO")
+      }
+
+    case .v1:
+      let payload = try Self.buildQSOPayload(
+        adifString: adifString,
+        apiKey: apiKey,
+        stationProfileID: stationProfileID
+      )
+      let request = try buildRequest(
+        baseURL: baseURL,
+        path: "api/qso",
+        method: "POST",
+        body: payload
+      )
+      let response: V1QSOResponse = try await perform(
+        request, label: "api/qso", decodeAs: V1QSOResponse.self)
+
+      guard response.status.lowercased() == "created" || response.status.lowercased() == "ok" else {
+        throw APIError(message: Self.joinMessages(response.messages) ?? "Wavelog rejected QSO")
+      }
     }
-
-    return response
   }
 
   public func testConnection(
@@ -104,33 +186,108 @@ public final class WavelogAPIClient: @unchecked Sendable {
   ) async throws -> Bool {
     let testADIF =
       "<CALL:4>TEST <MODE:3>FT8 <FREQ:9>14.074000 <QSO_DATE:8>20240101 <TIME_ON:6>000000 <RST_SENT:3>-10 <RST_RCVD:3>-10 <EOR>"
-    let payload = try Self.buildQSOPayload(
-      adifString: testADIF,
-      apiKey: apiKey,
-      stationProfileID: stationProfileID
-    )
-    let request = try buildRequest(baseURL: baseURL, endpointPath: "qso/true", body: payload)
-    let response: QSOResponse = try await perform(request, decodeAs: QSOResponse.self)
-    return response.status.lowercased() == "created" || response.status.lowercased() == "ok"
+
+    switch Self.apiVersion(for: apiKey) {
+    case .v2:
+      let payload = try Self.buildV2ADIFPayload(
+        adifString: testADIF,
+        stationProfileID: stationProfileID,
+        dryrun: true
+      )
+      let request = try buildRequest(
+        baseURL: baseURL,
+        path: "api/v2/qso",
+        method: "POST",
+        body: payload,
+        bearerToken: apiKey
+      )
+      let result: V2ImportResult = try await performV2(request, label: "api/v2/qso")
+      return result.parsed > 0
+
+    case .v1:
+      let payload = try Self.buildQSOPayload(
+        adifString: testADIF,
+        apiKey: apiKey,
+        stationProfileID: stationProfileID
+      )
+      let request = try buildRequest(
+        baseURL: baseURL,
+        path: "api/qso/true",
+        method: "POST",
+        body: payload
+      )
+      let response: V1QSOResponse = try await perform(
+        request, label: "api/qso/true", decodeAs: V1QSOResponse.self)
+      return response.status.lowercased() == "created" || response.status.lowercased() == "ok"
+    }
   }
 
   public func fetchStationProfiles(
     apiKey: String,
     baseURL: String
   ) async throws -> [StationProfile] {
-    let request = try buildRequest(
-      baseURL: baseURL, endpointPath: "station_info/\(apiKey)", body: Data())
-    return try await perform(request, decodeAs: [StationProfile].self)
+    switch Self.apiVersion(for: apiKey) {
+    case .v2:
+      // The list is paginated (50 per page by default); ask for the documented
+      // maximum so a single request always returns every station location.
+      let request = try buildRequest(
+        baseURL: baseURL,
+        path: "api/v2/station",
+        method: "GET",
+        bearerToken: apiKey,
+        query: [URLQueryItem(name: "per_page", value: "5000")]
+      )
+      let stations: [V2Station] = try await performV2(request, label: "api/v2/station")
+      return stations.map { station in
+        StationProfile(
+          stationId: String(station.id),
+          stationProfileName: station.name ?? "",
+          stationGridsquare: station.gridsquare ?? "",
+          stationCallsign: station.callsign ?? "",
+          stationActive: (station.active ?? false) ? "1" : "0"
+        )
+      }
+
+    case .v1:
+      let request = try buildRequest(
+        baseURL: baseURL,
+        path: "api/station_info/\(apiKey)",
+        method: "POST",
+        body: Data()
+      )
+      return try await perform(
+        request, label: "api/station_info", decodeAs: [StationProfile].self)
+    }
   }
 
-  public func fetchVersion(
+  /// Validates the credential and returns what the server identifies itself
+  /// with. Doubles as the periodic reachability check.
+  public func fetchServerInfo(
     apiKey: String,
     baseURL: String
-  ) async throws -> String {
-    let payload = try Self.buildVersionPayload(apiKey: apiKey)
-    let request = try buildRequest(baseURL: baseURL, endpointPath: "version", body: payload)
-    let response: VersionResponse = try await perform(request, decodeAs: VersionResponse.self)
-    return response.version
+  ) async throws -> ServerInfo {
+    switch Self.apiVersion(for: apiKey) {
+    case .v2:
+      let request = try buildRequest(
+        baseURL: baseURL,
+        path: "api/v2/token",
+        method: "GET",
+        bearerToken: apiKey
+      )
+      let token: V2Token = try await performV2(request, label: "api/v2/token")
+      return .tokenOwner(token.owner ?? "")
+
+    case .v1:
+      let request = try buildRequest(
+        baseURL: baseURL,
+        path: "api/version",
+        method: "POST",
+        body: try Self.buildVersionPayload(apiKey: apiKey)
+      )
+      let response: V1VersionResponse = try await perform(
+        request, label: "api/version", decodeAs: V1VersionResponse.self)
+      return .version(response.version)
+    }
   }
 
   public static func buildQSOPayload(
@@ -138,7 +295,7 @@ public final class WavelogAPIClient: @unchecked Sendable {
     apiKey: String,
     stationProfileID: String
   ) throws -> Data {
-    let payload = QSORequestPayload(
+    let payload = V1QSOPayload(
       key: apiKey,
       stationProfileID: stationProfileID,
       type: "adif",
@@ -148,34 +305,67 @@ public final class WavelogAPIClient: @unchecked Sendable {
   }
 
   public static func buildVersionPayload(apiKey: String) throws -> Data {
-    return try JSONEncoder().encode(KeyPayload(key: apiKey))
+    return try JSONEncoder().encode(V1KeyPayload(key: apiKey))
   }
 
-  private func buildRequest(baseURL: String, endpointPath: String, body: Data) throws -> URLRequest
-  {
-    guard let endpoint = endpointURL(baseURL: baseURL, endpointPath: endpointPath) else {
+  public static func buildV2ADIFPayload(
+    adifString: String,
+    stationProfileID: String,
+    dryrun: Bool
+  ) throws -> Data {
+    guard let stationID = Int(stationProfileID.trimmingCharacters(in: .whitespaces)) else {
+      throw APIError(message: "Select a station profile first")
+    }
+    let payload = V2ADIFImportPayload(
+      stationProfileID: stationID,
+      adif: adifString,
+      dryrun: dryrun
+    )
+    return try JSONEncoder().encode(payload)
+  }
+
+  private func buildRequest(
+    baseURL: String,
+    path: String,
+    method: String,
+    body: Data? = nil,
+    bearerToken: String? = nil,
+    query: [URLQueryItem] = []
+  ) throws -> URLRequest {
+    guard let endpoint = endpointURL(baseURL: baseURL, path: path, query: query) else {
       throw APIError(message: "Invalid Wavelog base URL: \(baseURL)")
     }
 
     var request = URLRequest(url: endpoint)
-    request.httpMethod = "POST"
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpMethod = method
     request.setValue("application/json", forHTTPHeaderField: "Accept")
     request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
-    request.httpBody = body
+    if let bearerToken {
+      request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+    }
+    if let body {
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+      request.httpBody = body
+    }
     return request
   }
 
-  private func endpointURL(baseURL: String, endpointPath: String) -> URL? {
+  private func endpointURL(baseURL: String, path: String, query: [URLQueryItem]) -> URL? {
     let normalized = Self.normalizeURL(baseURL)
     guard var url = URL(string: normalized) else {
       return nil
     }
 
-    let trimmed = endpointPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    url.appendPathComponent("api")
-    url.appendPathComponent(trimmed)
-    return url
+    for component in path.split(separator: "/") {
+      url.appendPathComponent(String(component))
+    }
+
+    guard !query.isEmpty else { return url }
+    guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+      return nil
+    }
+    components.queryItems = query
+    return components.url
   }
 
   public static func normalizeURL(_ urlString: String) -> String {
@@ -189,17 +379,25 @@ public final class WavelogAPIClient: @unchecked Sendable {
     return "https://\(trimmed)"
   }
 
-  private func perform<T: Decodable>(_ request: URLRequest, decodeAs type: T.Type) async throws -> T
-  {
-    let endpoint = request.url?.lastPathComponent ?? "unknown"
-    Log.api.debug("Sending API request to /api/\(endpoint, privacy: .public)")
+  private func performV2<T: Decodable>(_ request: URLRequest, label: String) async throws -> T {
+    let envelope: V2Envelope<T> = try await perform(
+      request, label: label, decodeAs: V2Envelope<T>.self)
+    return envelope.data
+  }
+
+  private func perform<T: Decodable>(
+    _ request: URLRequest,
+    label: String,
+    decodeAs type: T.Type
+  ) async throws -> T {
+    Log.api.debug("Sending API request to /\(label, privacy: .public)")
 
     let (data, response): (Data, URLResponse)
     do {
       (data, response) = try await urlSession.data(for: request)
     } catch {
       Log.api.error(
-        "Network request failed for /api/\(endpoint, privacy: .public): \(error.localizedDescription, privacy: .public)"
+        "Network request failed for /\(label, privacy: .public): \(error.localizedDescription, privacy: .public)"
       )
       let hint =
         Self.isLikelyTLSError(error)
@@ -208,12 +406,12 @@ public final class WavelogAPIClient: @unchecked Sendable {
     }
 
     guard let http = response as? HTTPURLResponse else {
-      Log.api.error("Received non-HTTP response for /api/\(endpoint, privacy: .public)")
+      Log.api.error("Received non-HTTP response for /\(label, privacy: .public)")
       throw APIError(message: "Invalid HTTP response")
     }
 
     Log.api.debug(
-      "API response status \(http.statusCode, privacy: .public) from /api/\(endpoint, privacy: .public)"
+      "API response status \(http.statusCode, privacy: .public) from /\(label, privacy: .public)"
     )
 
     guard (200...299).contains(http.statusCode) else {
@@ -229,7 +427,7 @@ public final class WavelogAPIClient: @unchecked Sendable {
       return try jsonDecoder.decode(T.self, from: data)
     } catch {
       Log.api.error(
-        "Failed to decode API response from /api/\(endpoint, privacy: .public): \(error.localizedDescription, privacy: .public)"
+        "Failed to decode API response from /\(label, privacy: .public): \(error.localizedDescription, privacy: .public)"
       )
       throw APIError(message: "Failed to decode response: \(error.localizedDescription)")
     }
@@ -249,23 +447,33 @@ public final class WavelogAPIClient: @unchecked Sendable {
     return nsError.domain == NSURLErrorDomain && tlsCodes.contains(nsError.code)
   }
 
-  private static func extractErrorMessage(from data: Data) -> String {
+  private static func joinMessages(_ messages: [String]?) -> String? {
+    let cleaned =
+      (messages ?? [])
+      .map { stripHTML($0) }
+      .filter { !$0.isEmpty }
+    return cleaned.isEmpty ? nil : cleaned.joined(separator: "\n")
+  }
+
+  public static func extractErrorMessage(from data: Data) -> String {
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       return String(data: data, encoding: .utf8) ?? "Unknown error"
+    }
+
+    // v2: { "error": { "code": ..., "message": ..., "details": ... } }
+    if let error = json["error"] as? [String: Any],
+      let message = error["message"] as? String,
+      !message.isEmpty
+    {
+      return stripHTML(message)
     }
 
     if let reason = json["reason"] as? String, !reason.isEmpty {
       return stripHTML(reason)
     }
 
-    if let messages = json["messages"] as? [String] {
-      let cleaned =
-        messages
-        .map { stripHTML($0) }
-        .filter { !$0.isEmpty }
-      if !cleaned.isEmpty {
-        return cleaned.joined(separator: "\n")
-      }
+    if let messages = json["messages"] as? [String], let joined = joinMessages(messages) {
+      return joined
     }
 
     return String(data: data, encoding: .utf8) ?? "Unknown error"

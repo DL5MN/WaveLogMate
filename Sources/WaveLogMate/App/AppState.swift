@@ -11,7 +11,17 @@ public final class AppState {
   public var wsjtxStatus: WSJTXStatus = WSJTXStatus()
   public var wsjtxClientId: String = ""
   public var wsjtxVersion: String = ""
-  public var wavelogVersion: String = ""
+  public var wavelogServerInfo: WavelogAPIClient.ServerInfo?
+
+  /// API v1 reports the Wavelog release, v2 has no version endpoint and
+  /// reports the token owner instead.
+  public var wavelogDetail: String? {
+    switch wavelogServerInfo {
+    case .version(let version): return version.isEmpty ? nil : "v\(version)"
+    case .tokenOwner(let callsign): return callsign.isEmpty ? nil : callsign
+    case nil: return nil
+    }
+  }
 
   public var recentQSOs: [QSO] = []
   public private(set) var totalQSOsLogged: Int = 0
@@ -122,7 +132,7 @@ public final class AppState {
 
     do {
       let adifString = ADIFGenerator.generate([newQSO])
-      _ = try await apiClient.sendQSO(
+      try await apiClient.sendQSO(
         adifString: adifString,
         apiKey: apiKey,
         stationProfileID: config.stationProfileID,
@@ -167,21 +177,20 @@ public final class AppState {
     if !apiKey.isEmpty && !config.wavelogURL.isEmpty {
       Task { @MainActor in
         await fetchStationProfiles()
-        await checkWavelogVersion()
+        await checkWavelogServer()
       }
     }
 
     startWavelogCheckTimer()
   }
 
-  private func checkWavelogVersion() async {
+  private func checkWavelogServer() async {
     guard !apiKey.isEmpty, !config.wavelogURL.isEmpty else { return }
     do {
-      let version = try await apiClient.fetchVersion(
+      wavelogServerInfo = try await apiClient.fetchServerInfo(
         apiKey: apiKey,
         baseURL: config.wavelogURL
       )
-      wavelogVersion = version
       if wavelogConnectionStatus != .connected {
         wavelogConnectionStatus = .connected
       }
@@ -195,7 +204,7 @@ public final class AppState {
     wavelogCheckTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) {
       [weak self] _ in
       Task { @MainActor in
-        await self?.checkWavelogVersion()
+        await self?.checkWavelogServer()
       }
     }
   }
@@ -266,7 +275,7 @@ public final class AppState {
 
     do {
       let adifString = ADIFGenerator.generate([qso])
-      _ = try await apiClient.sendQSO(
+      try await apiClient.sendQSO(
         adifString: adifString,
         apiKey: apiKey,
         stationProfileID: config.stationProfileID,
