@@ -42,12 +42,12 @@ Thanks for your interest in contributing to WaveLogMate.
 
 - Add or update unit tests for behavior changes.
 - Keep existing tests passing.
-- Ensure `make check` passes before requesting review.
+- Make sure `make check` passes before requesting review.
 
 ## Communication
 
 - Be respectful, constructive, and kind.
 - Assume positive intent and focus feedback on code and behavior.
-- Prefer actionable review comments with concrete suggestions.
+- Prefer review comments with concrete suggestions.
 
 Thanks again for helping improve WaveLogMate.

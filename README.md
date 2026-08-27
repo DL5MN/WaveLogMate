@@ -7,15 +7,15 @@
 
 > Native macOS menu bar application for automatic QSO logging from WSJT-X to [Wavelog](https://www.wavelog.org).
 
-There are already several tools that bridge WSJT-X and Wavelog — [WaveLogGate](https://github.com/wavelog/WaveLogGate), [WaveLogStoat](https://github.com/int2001/WaveLogStoat), and [WaveLogGoat](https://github.com/johnsonm/WaveLogGoat). They all work, but none of them are native macOS apps. I wanted something that feels at home on my Mac: a lightweight menu bar app built with SwiftUI that uses the macOS Keychain for secrets, sends native notifications, supports Sparkle auto-updates, and doesn't bundle an entire Electron runtime or require a terminal to run. That's WaveLogMate.
+There are already several tools that bridge WSJT-X and Wavelog — [WaveLogGate](https://github.com/wavelog/WaveLogGate), [WaveLogStoat](https://github.com/int2001/WaveLogStoat), and [WaveLogGoat](https://github.com/johnsonm/WaveLogGoat). They all work, but none of them are native macOS apps. I wanted something that feels at home on my Mac: a lightweight menu bar app built with SwiftUI. It stores secrets in the macOS Keychain, sends native notifications, and supports Sparkle auto-updates. It uses real AppKit views instead of a web view, and it doesn't need a terminal to run. That's WaveLogMate.
 
-WaveLogMate receives QSO data from WSJT-X and automatically forwards it to your Wavelog instance in real-time. WSJT-X sends UDP packets to WaveLogMate — you just need to point WSJT-X at the right address and port. You choose between the text-based ADIF/XML protocol (Secondary UDP Server) or the binary QDataStream protocol, which adds real-time frequency and status display.
+WaveLogMate receives QSO data from WSJT-X and automatically forwards it to your Wavelog instance in real-time. WSJT-X sends UDP packets to WaveLogMate. Point WSJT-X at the right address and port. You choose between the text protocol (ADIF/XML on the Secondary UDP Server) and the binary protocol (QDataStream), which adds real-time frequency and status display.
 
 ## Features
 
 - **Automatic QSO Logging** - QSOs from WSJT-X are logged to Wavelog in real-time
 - **Wavelog API v1 and v2** - Picks the matching API from your key, no setting needed
-- **Flexible Protocol Choice** - Text ADIF/XML (port 2333) or binary QDataStream (port 2237)
+- **Protocol Choice** - Text protocol (ADIF/XML, port 2333) or binary protocol (QDataStream, port 2237)
 - **Menu Bar App** - Lives in your menu bar with live status display
 - **Real-time Status** - Shows current frequency, mode, and DX call from WSJT-X
 - **Connection Monitoring** - Heartbeat-based WSJT-X connection tracking
@@ -24,7 +24,7 @@ WaveLogMate receives QSO data from WSJT-X and automatically forwards it to your 
 - **Self-Signed Cert Support** - Works with self-hosted Wavelog instances
 - **Auto-Updates** - Built-in update checking via Sparkle
 - **Launch at Login** - Optional automatic startup
-- **Native macOS** - Built with SwiftUI, feels right at home on macOS
+- **Native macOS** - Built with SwiftUI, no bundled runtime
 
 ## Requirements
 
@@ -50,7 +50,7 @@ brew install --cask wavelogmate
 
 ### 1. Configure WSJT-X
 
-WSJT-X sends UDP data to a configured address and port. Despite the label "UDP Server" in WSJT-X settings, WSJT-X is the sender — WaveLogMate receives the data on the address and port you configure here.
+WSJT-X sends UDP data to a configured address and port. Despite the label "UDP Server" in WSJT-X settings, WSJT-X is the sender. WaveLogMate receives the data on the address and port you configure here.
 
 **Text protocol (default):** In WSJT-X, go to **Settings -> Reporting** and configure the **Secondary UDP Server** to point at WaveLogMate:
 
@@ -59,7 +59,7 @@ WSJT-X sends UDP data to a configured address and port. Despite the label "UDP S
 
 > **Important**: Use the _Secondary_ UDP Server, NOT the primary one. This keeps the primary port free for JT-Bridge, GridTracker, or other tools.
 
-**Binary protocol:** WaveLogMate receives on the primary UDP port (2237) by default — no special WSJT-X configuration needed. Note that only one application can receive on this port at a time.
+**Binary protocol:** WaveLogMate receives on the primary UDP port (2237) by default. No special WSJT-X configuration is needed. See [Binary Protocol](#binary-protocol) for the port conflict this can cause.
 
 ### 2. Configure WaveLogMate
 
@@ -80,28 +80,30 @@ WSJT-X sends UDP data to a configured address and port. Despite the label "UDP S
 
 ### 3. Start Logging
 
-Once configured, WaveLogMate automatically receives QSOs from WSJT-X. When you log a QSO in WSJT-X, it appears in the menu bar dropdown and is forwarded to Wavelog.
+After you configure it, WaveLogMate receives QSOs from WSJT-X automatically. When you log a QSO in WSJT-X, WaveLogMate forwards it to Wavelog and shows it in the menu bar.
 
 ## Configuration Options
 
-| Setting                 | Default   | Description                                                |
-| ----------------------- | --------- | ---------------------------------------------------------- |
-| Wavelog URL             | -         | Your Wavelog instance URL                                  |
-| API Key                 | -         | `wl2_` token (API v2) or Read+Write key (API v1)           |
-| Station Profile         | -         | Selected from your Wavelog station locations               |
-| Protocol                | Text      | Text (ADIF/XML) or Binary (QDataStream) — one at a time   |
-| Text UDP Port           | 2333      | WSJT-X Secondary UDP Server port                           |
-| Binary UDP Port         | 2237      | WSJT-X Primary UDP Server port                             |
-| Bind Address            | 127.0.0.1 | Address to receive WSJT-X data on                          |
-| Allow Self-Signed Certs | Off       | For self-hosted Wavelog with self-signed TLS               |
-| Show in Menu Bar        | On        | Display icon in menu bar                                   |
-| Show in Dock            | Off       | Display icon in dock                                       |
-| Launch at Login         | Off       | Start automatically at login                               |
-| Show Notifications      | On        | macOS notifications for QSO events                         |
+| Setting                    | Default   | Description                                            |
+| -------------------------- | --------- | ------------------------------------------------------ |
+| Wavelog URL                | -         | Your Wavelog instance URL                              |
+| API Key                    | -         | `wl2_` token (API v2) or Read+Write key (API v1)       |
+| Station Profile            | -         | Selected from your Wavelog station locations           |
+| Protocol                   | Text      | Text (ADIF/XML) or Binary (QDataStream), one at a time |
+| Text UDP Port              | 2333      | WSJT-X Secondary UDP Server port                       |
+| Binary UDP Port            | 2237      | WSJT-X Primary UDP Server port                         |
+| Bind Address               | 127.0.0.1 | Address to receive WSJT-X data on                      |
+| Allow Self-Signed Certs    | Off       | For self-hosted Wavelog with self-signed TLS           |
+| HTTP Timeout               | 5000 ms   | Wavelog request timeout, minimum 500 ms                |
+| Show in Menu Bar           | On        | Display icon in menu bar                               |
+| Show in Dock               | Off       | Display icon in dock                                   |
+| Show Frequency in Menu Bar | Off       | Live frequency display, needs the binary protocol      |
+| Launch at Login            | Off       | Start automatically at login                           |
+| Show Notifications         | On        | macOS notifications for QSO events                     |
 
 ## Binary Protocol
 
-Switching to the binary protocol (port 2237) provides everything the text protocol does, plus:
+The binary protocol (port 2237) provides everything the text protocol does, plus:
 
 - Real-time frequency and mode display in the menu bar
 - WSJT-X connection heartbeat monitoring
@@ -144,7 +146,13 @@ To create a new release, run:
 make release VERSION=0.2.0
 ```
 
-This bumps the version in `Info.plist` and `project.yml`, commits, tags `v0.2.0`, and pushes. The GitHub Actions release workflow then builds the DMG, creates the GitHub Release with auto-generated release notes, updates the changelog, deploys the Sparkle appcast, and bumps the Homebrew cask.
+This bumps the version in `Info.plist` and `project.yml`, commits, tags `v0.2.0`, and pushes. The GitHub Actions release workflow then:
+
+1. Builds the DMG.
+2. Creates the GitHub Release with auto-generated release notes.
+3. Updates the changelog.
+4. Deploys the Sparkle appcast.
+5. Bumps the Homebrew cask.
 
 ## Architecture
 
@@ -163,18 +171,20 @@ See [DECISIONS.md](DECISIONS.md) for the design decisions behind the code.
 
 |                       | WaveLogMate            | [WaveLogGate](https://github.com/wavelog/WaveLogGate) | [WaveLogStoat](https://github.com/int2001/WaveLogStoat) | [WaveLogGoat](https://github.com/johnsonm/WaveLogGoat) |
 | --------------------- | ---------------------- | ----------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------ |
-| **Platform**          | macOS (native)         | Windows, macOS, Linux (Electron)                      | Windows, macOS, Linux (Go CLI)                          | Windows, macOS, Linux (Go)                             |
+| **Platform**          | macOS (native)         | Windows, macOS, Linux (Go/Wails)                      | Windows, macOS, Linux (Go CLI)                          | Windows, macOS, Linux (Go)                             |
 | **QSO Logging**       | Yes                    | Yes                                                   | Yes                                                     | No                                                     |
-| **CAT Control**       | No                     | Yes (FLRig/Hamlib)                                    | No                                                      | Yes                                                    |
-| **UI**                | Menu bar app (SwiftUI) | Desktop window (Electron)                             | Terminal                                                | Terminal                                               |
-| **Auto-updates**      | Sparkle                | Electron auto-updater                                 | Manual                                                  | Manual                                                 |
-| **Secrets storage**   | macOS Keychain         | Config file                                           | Config file                                             | Config file                                            |
-| **Notifications**     | Native macOS           | Electron notifications                                | None                                                    | None                                                   |
-| **Self-signed certs** | Yes                    | Yes                                                   | Yes                                                     | Yes                                                    |
+| **CAT Control**       | No                     | Yes (FLRig/Hamlib)                                    | No                                                      | Yes (FLRig/Hamlib)                                     |
+| **UI**                | Menu bar app (SwiftUI) | Desktop window (Wails/Svelte)                         | Terminal                                                | Terminal                                               |
+| **Auto-updates**      | Sparkle                | Manual                                                | Manual                                                  | Manual                                                 |
+| **Secrets storage**   | macOS Keychain         | Config file                                           | Config file (INI)                                       | Config file (JSON)                                     |
+| **Notifications**     | Native macOS           | Native (beeep)                                        | None                                                    | None                                                   |
+| **Self-signed certs** | Yes                    | Yes                                                   | No                                                      | No                                                     |
 
-WaveLogMate focuses on doing one thing well: getting QSOs from WSJT-X into Wavelog with zero friction. If you need CAT control, use WaveLogGate or WaveLogGoat. If you want a native Mac experience for QSO logging, this is it.
+Compared against WaveLogGate v2.1.0, WaveLogStoat v0.0.4, and WaveLogGoat v0.0.5, checked 2026-08-27.
 
-See also: [Wavelog](https://github.com/wavelog/wavelog) — the logging platform itself.
+WaveLogMate does one thing: it moves QSOs from WSJT-X into Wavelog. If you need CAT control, use WaveLogGate or WaveLogGoat.
+
+See also: [Wavelog](https://github.com/wavelog/wavelog), the logging platform itself.
 
 ## License
 
